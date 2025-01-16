@@ -1,0 +1,75 @@
+name: Build, Push Docker Image, and Deploy with Namespaxe
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  ci_cd_pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Step 2: Set up dependencies for building OpenMP + MPI
+      - name: Set up OpenMP and MPI dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y \
+            build-essential \
+            openmpi-bin \
+            libomp-dev \
+            mpich \
+            jq
+
+      # Step 3: Log in to Docker Hub
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Step 4: Build Docker image for OpenMP + MPI application
+      - name: Build and push Docker image for OpenMP + MPI app
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          tags: ${{ secrets.DOCKER_USERNAME }}/mpi_openmp_app:latest
+          push: true
+
+      # Step 5: Log in to Namespaxe using GitHub secrets
+      - name: Namespaxe login
+        env:
+          NAMESPAXE_USERNAME: ${{ secrets.NAMESPAXE_USERNAME }}
+          NAMESPAXE_PASSWORD: ${{ secrets.NAMESPAXE_PASSWORD }}
+        run: |
+          namespaxe login --username "${{ secrets.NAMESPAXE_USERNAME }}" --password "${{ secrets.NAMESPAXE_PASSWORD }}"
+
+      # Step 6: Fetch the namespace list and extract the first one
+      - name: Get the first namespace
+        id: fetch_namespace
+        run: |
+          response=$(namespaxe list ns --clean)
+          namespace=$(echo $response | jq -r '.data[0].ns_name')
+          echo "namespace=$namespace" >> $GITHUB_ENV
+
+      # Step 7: Install Kubernetes configuration
+      - name: Install Kubernetes configuration
+        run: |
+          namespaxe install-k8s-config ns ${{ env.namespace }}
+
+      # Step 8: Install kubectl
+      - name: Install kubectl
+        run: |
+          curl -LO https://storage.googleapis.com/kubernetes-release/release/`curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt`/bin/linux/amd64/kubectl
+          chmod +x ./kubectl
+          sudo mv ./kubectl /usr/local/bin/kubectl
+
+      # Step 9: Deploy to Kubernetes
+      - name: Deploy the app to Kubernetes
+        run: |
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
