@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mpi-openmp-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mpi-openmp-app
+  template:
+    metadata:
+      labels:
+        app: mpi-openmp-app
+    spec:
+      containers:
+        - name: mpi-openmp-app
+          image: <your-docker-repo>/mpi-openmp-app
+          ports:
+            - containerPort: 8080
+          env:
+            - name: MPI_HOSTS
+              value: "mpi-pod-0,mpi-pod-1,mpi-pod-2"
