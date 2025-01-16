@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
     mpich \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy your MPI + OpenMP code into the container
+# Copy your MPI + OpenMP C++ code into the container
 COPY . /app
 
 # Set the working directory
