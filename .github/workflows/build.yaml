@@ -20,6 +20,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y \
             build-essential \
             libcurl4-openssl-dev \
+            libwebsockets-dev \
             openmpi-bin \
             libomp-dev \
             mpich \
@@ -43,7 +44,7 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: .
-          tags: ${{ secrets.DOCKER_USERNAME }}/log-analytics:2.1
+          tags: ${{ secrets.DOCKER_USERNAME }}/log-analytics:2.2
           push: true
 
       # Step 6: Log in to Namespaxe using GitHub secrets
