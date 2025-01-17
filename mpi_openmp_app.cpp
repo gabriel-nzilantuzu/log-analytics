@@ -4,40 +4,46 @@
 #include <string.h>
 #include <mpi.h>
 #include <time.h>
-#include <curl/curl.h>
 
 // Function to analyze logs
-void analyze_logs(const char **logs, int num_logs, int rank, int num_procs, char *output) {
+void analyze_logs(const char **logs, int num_logs, int rank, int num_procs) {
+    // Divide the logs among the processes
     int logs_per_process = num_logs / num_procs;
     int start_idx = rank * logs_per_process;
     int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
 
-    sprintf(output + strlen(output), "\"analyzed_logs\": [");
     for (int i = start_idx; i < end_idx; i++) {
-        sprintf(output + strlen(output), "{\"log_id\": %d, \"log\": \"%s\", \"rank\": %d},", i, logs[i], rank);
+        printf("Rank %d (Thread %d) analyzing log %d: %s\n", rank, omp_get_thread_num(), i, logs[i]);
+        // Simulate heavy computation with a sleep
+        for (volatile int j = 0; j < 100000000; j++); // Simulating workload
     }
-    output[strlen(output) - 1] = ']'; // Remove trailing comma
 }
 
 // Function to categorize logs
-void categorize_logs(const char **logs, int num_logs, int rank, int num_procs, char *output) {
+void categorize_logs(const char **logs, int num_logs, int rank, int num_procs) {
+    // Divide the logs among the processes
     int logs_per_process = num_logs / num_procs;
     int start_idx = rank * logs_per_process;
     int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
 
-    sprintf(output + strlen(output), ", \"categories\": [");
     for (int i = start_idx; i < end_idx; i++) {
-        const char *category = strstr(logs[i], "Error") ? "ERROR" :
-                               strstr(logs[i], "Warning") ? "WARNING" :
-                               strstr(logs[i], "Critical") ? "CRITICAL" : "INFO";
-        sprintf(output + strlen(output), "{\"log_id\": %d, \"category\": \"%s\", \"rank\": %d},", i, category, rank);
+        if (strstr(logs[i], "Error")) {
+            printf("Rank %d (Thread %d): Log %d categorized as ERROR\n", rank, omp_get_thread_num(), i);
+        } else if (strstr(logs[i], "Warning")) {
+            printf("Rank %d (Thread %d): Log %d categorized as WARNING\n", rank, omp_get_thread_num(), i);
+        } else if (strstr(logs[i], "Critical")) {
+            printf("Rank %d (Thread %d): Log %d categorized as CRITICAL\n", rank, omp_get_thread_num(), i);
+        } else {
+            printf("Rank %d (Thread %d): Log %d categorized as INFO\n", rank, omp_get_thread_num(), i);
+        }
     }
-    output[strlen(output) - 1] = ']'; // Remove trailing comma
 }
 
-// Function to count occurrences of a keyword
-void count_keyword_occurrences(const char **logs, int num_logs, const char *keyword, int rank, int num_procs, char *output) {
+// Function to count the occurrences of a keyword in logs
+void count_keyword_occurrences(const char **logs, int num_logs, const char *keyword, int rank, int num_procs) {
     int count = 0;
+
+    // Divide the logs among the processes
     int logs_per_process = num_logs / num_procs;
     int start_idx = rank * logs_per_process;
     int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
@@ -47,39 +53,23 @@ void count_keyword_occurrences(const char **logs, int num_logs, const char *keyw
             count++;
         }
     }
-    sprintf(output + strlen(output), ", \"keyword_count\": {\"keyword\": \"%s\", \"count\": %d, \"rank\": %d}", keyword, count, rank);
+
+    printf("Rank %d: Keyword '%s' found %d times.\n", rank, keyword, count);
 }
 
-// Function to calculate checksum
-void calculate_checksum(const char **logs, int num_logs, int rank, int num_procs, char *output) {
+// Function to calculate a checksum for each log
+void calculate_checksum(const char **logs, int num_logs, int rank, int num_procs) {
+    // Divide the logs among the processes
     int logs_per_process = num_logs / num_procs;
     int start_idx = rank * logs_per_process;
     int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
 
-    sprintf(output + strlen(output), ", \"checksums\": [");
     for (int i = start_idx; i < end_idx; i++) {
         unsigned long checksum = 0;
         for (int j = 0; logs[i][j] != '\0'; j++) {
             checksum += logs[i][j];
         }
-        sprintf(output + strlen(output), "{\"log_id\": %d, \"checksum\": %lu, \"rank\": %d},", i, checksum, rank);
-    }
-    output[strlen(output) - 1] = ']'; // Remove trailing comma
-}
-
-// Function to send JSON data via webhook
-void send_webhook(const char *url, const char *json_data) {
-    CURL *curl = curl_easy_init();
-    if (curl) {
-        curl_easy_setopt(curl, CURLOPT_URL, url);
-        curl_easy_setopt(curl, CURLOPT_POST, 1);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_data);
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, (struct curl_slist*)curl_slist_append(NULL, "Content-Type: application/json"));
-        CURLcode res = curl_easy_perform(curl);
-        if (res != CURLE_OK) {
-            fprintf(stderr, "CURL Error: %s\n", curl_easy_strerror(res));
-        }
-        curl_easy_cleanup(curl);
+        printf("Rank %d (Thread %d): Log %d checksum: %lu\n", rank, omp_get_thread_num(), i, checksum);
     }
 }
 
@@ -100,42 +90,31 @@ int main(int argc, char *argv[]) {
     };
 
     double start_time, end_time;
+    
+    // Start timer for the master rank (rank 0)
     if (rank == 0) {
         start_time = MPI_Wtime();
     }
 
     omp_set_num_threads(4); // Use 4 threads per process
 
-    // Allocate space for analysis data
-    char analysis_data[8192] = "{";
-    sprintf(analysis_data + strlen(analysis_data), "\"rank\": %d, \"tasks\": {", rank);
+    // Execute log analysis, categorization, and other tasks
+    printf("\n=== Step 1: Analyze Logs (Rank %d) ===\n", rank);
+    analyze_logs(logs, num_logs, rank, num_procs);
 
-    // Perform tasks
-    analyze_logs(logs, num_logs, rank, num_procs, analysis_data);
-    categorize_logs(logs, num_logs, rank, num_procs, analysis_data);
-    count_keyword_occurrences(logs, num_logs, "Critical", rank, num_procs, analysis_data);
-    calculate_checksum(logs, num_logs, rank, num_procs, analysis_data);
+    printf("\n=== Step 2: Categorize Logs (Rank %d) ===\n", rank);
+    categorize_logs(logs, num_logs, rank, num_procs);
 
-    sprintf(analysis_data + strlen(analysis_data), "}}"); // Close JSON
+    printf("\n=== Step 3: Count Keyword Occurrences (Rank %d) ===\n", rank);
+    count_keyword_occurrences(logs, num_logs, "Critical", rank, num_procs);
 
-    // Gather data on rank 0
-    char gathered_data[num_procs][8192];
-    MPI_Gather(analysis_data, 8192, MPI_CHAR, gathered_data, 8192, MPI_CHAR, 0, MPI_COMM_WORLD);
+    printf("\n=== Step 4: Calculate Checksums (Rank %d) ===\n", rank);
+    calculate_checksum(logs, num_logs, rank, num_procs);
 
+    // End timer for the master rank (rank 0)
     if (rank == 0) {
         end_time = MPI_Wtime();
-
-        // Compile final JSON
-        char final_json[65536] = "{\"all_tasks\": [";
-        for (int i = 0; i < num_procs; i++) {
-            strcat(final_json, gathered_data[i]);
-            strcat(final_json, ",");
-        }
-        final_json[strlen(final_json) - 1] = ']'; // Remove trailing comma
-        sprintf(final_json + strlen(final_json), ", \"total_time\": %f}", end_time - start_time);
-
-        // Send to webhook
-        send_webhook("http://your-webhook-url.com", final_json);
+        printf("\n=== Total execution time: %f seconds ===\n", end_time - start_time);
     }
 
     MPI_Finalize();
