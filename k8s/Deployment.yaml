@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: mpi-openmp-app
-          image: namespaxe/mpi_openmp_app:latest
+          image: namespaxe/log-analytics:1.1
           ports:
             - containerPort: 8080
           env:
