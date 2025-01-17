@@ -6,11 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV OMPI_ALLOW_RUN_AS_ROOT=1
 ENV OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
 
-# Create a non-root user and switch to that user
-RUN useradd -ms /bin/bash mpiuser
-USER mpiuser
-
-# Install required dependencies: OpenMPI, OpenMP, and build tools
+# Install required dependencies: OpenMPI, OpenMP, and build tools as root
 RUN apt-get update && apt-get install -y \
     build-essential \
     openmpi-bin \
@@ -20,14 +16,20 @@ RUN apt-get update && apt-get install -y \
     jq \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy your MPI + OpenMP C++ code into the container
-COPY . /app
+# Create a non-root user
+RUN useradd -ms /bin/bash mpiuser
 
-# Set the working directory
+# Set the user to 'mpiuser' for subsequent operations
+USER mpiuser
+
+# Set the working directory for the non-root user
 WORKDIR /app
 
-# Compile your application
+# Copy your MPI + OpenMP C++ code into the container (after creating the user)
+COPY --chown=mpiuser:mpiuser . /app
+
+# Compile your application (as mpiuser)
 RUN mpic++ -fopenmp -o mpi_openmp_app mpi_openmp_app.cpp
 
-# Command to run the application
+# Command to run the application (using mpirun as mpiuser)
 CMD ["sh", "-c", "trap 'echo SIGTERM received; exit 0' SIGTERM; mpirun -np 4 ./mpi_openmp_app && echo 'Application completed!'"]
