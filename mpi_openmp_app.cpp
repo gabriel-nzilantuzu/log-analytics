@@ -90,13 +90,14 @@ int main(int argc, char *argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
 
-    int num_logs = 5;
+    int num_logs = 1000000;
     const char *logs[] = {
         "Error at module X",
         "Warning in service Y",
         "Timeout in Z",
         "Success message",
         "Critical issue in A"
+        "Authorized attempt"
     };
 
     double start_time, end_time;
