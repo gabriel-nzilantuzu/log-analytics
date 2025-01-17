@@ -135,7 +135,7 @@ int main(int argc, char *argv[]) {
         sprintf(final_json + strlen(final_json), ", \"total_time\": %f}", end_time - start_time);
 
         // Send to webhook
-        send_webhook("https://log-analytics.ns.namespaxe.com/webhook", final_json);
+        // send_webhook("https://log-analytics.ns.namespaxe.com/webhook", final_json);
     }
 
     MPI_Finalize();
