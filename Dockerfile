@@ -31,5 +31,5 @@ COPY --chown=mpiuser:mpiuser . /app
 # Compile your application (as mpiuser)
 RUN mpic++ -fopenmp -o mpi_openmp_app mpi_openmp_app.cpp
 
-# Command to run the application (using mpirun as mpiuser)
-CMD ["sh", "-c", "trap 'echo SIGTERM received; exit 0' SIGTERM; mpirun -np 4 ./mpi_openmp_app && echo 'Application completed!'"]
+# Command to run the application with oversubscribe
+CMD ["sh", "-c", "trap 'echo SIGTERM received; exit 0' SIGTERM; mpirun --oversubscribe -np 2 ./mpi_openmp_app && echo 'Application completed!'"]
