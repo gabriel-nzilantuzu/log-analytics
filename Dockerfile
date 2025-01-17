@@ -24,4 +24,4 @@ WORKDIR /app
 RUN mpic++ -fopenmp -o mpi_openmp_app mpi_openmp_app.cpp
 
 # Command to run the application
-CMD ["mpirun", "-np", "4", "./mpi_openmp_app"]
+CMD ["sh", "-c", "mpirun -np 4 ./mpi_openmp_app && echo 'Application completed!'"]
