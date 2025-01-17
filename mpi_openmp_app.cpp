@@ -16,8 +16,6 @@ static int websocket_callback(struct libwebsocket_context *context, struct libwe
         case LWS_CALLBACK_CLIENT_RECEIVE:
             printf("Received data: %s\n", (char *)in);
             break;
-        case LWS_CALLBACK_CLIENT_WRITEABLE:
-            break;
         case LWS_CALLBACK_CLIENT_CLOSED:
             printf("WebSocket connection closed.\n");
             break;
@@ -27,61 +25,73 @@ static int websocket_callback(struct libwebsocket_context *context, struct libwe
     return 0;
 }
 
-void connect_socket(const char *url, const char *json_data) {
+// Connect using WebSocket
+void connect_websocket(const char *url, const char *json_data) {
     struct lws_context_creation_info info;
     struct lws_client_connect_info i;
     struct libwebsocket_context *context;
     struct libwebsocket *wsi;
 
-    // Initialize the WebSocket context
     memset(&info, 0, sizeof(info));
-    info.port = CONTEXT_PORT_NO_LISTEN; // We're a client, so no listening port
+    info.port = CONTEXT_PORT_NO_LISTEN; // We're a client, no listening port
     info.protocols = (struct libwebsocket_protocols[]) {{
         "http-only", websocket_callback, 0, 0,
     }, {NULL, NULL, 0, 0}}; // Single protocol
 
-    // Create WebSocket context
     context = libwebsocket_create_context(&info);
-    if (context == NULL) {
+    if (!context) {
         fprintf(stderr, "Error creating WebSocket context.\n");
         return;
     }
 
-    // Set up connection information
     memset(&i, 0, sizeof(i));
     i.context = context;
-    i.address = "log-analytics.ns.namespaxe.com"; // WebSocket server address
-    i.port = 80; // WebSocket port (change if needed)
-    i.path = "/logger"; // WebSocket path
+    i.address = "log-analytics.ns.namespaxe.com";
+    i.port = 80;
+    i.path = "/logger";
     i.host = i.address;
     i.origin = i.address;
-    i.protocol = "http-only"; // Protocol to use
+    i.protocol = "http-only";
 
-    // Connect to WebSocket server
     wsi = libwebsocket_client_connect_via_info(&i);
-    if (wsi == NULL) {
+    if (!wsi) {
         fprintf(stderr, "WebSocket connection failed.\n");
         libwebsocket_context_destroy(context);
         return;
     }
 
-    // Wait for the WebSocket connection to be established
+    // Wait for connection establishment
     while (libwebsocket_service(context, 0) >= 0) {
         if (libwebsocket_get_peer_address(wsi) != NULL) {
             break;
         }
     }
 
-    // Send the JSON data through the WebSocket
+    // Send data through WebSocket
     libwebsocket_write(wsi, (unsigned char *)json_data, strlen(json_data), LWS_WRITE_TEXT);
 
-    // Wait for the server to receive the message
+    // Wait for server to receive the message
     libwebsocket_service(context, 0);
 
     // Close the WebSocket connection
     libwebsocket_context_destroy(context);
 }
 
+// Send JSON data via HTTP POST using CURL (for webhook)
+void connect_socket(const char *url, const char *json_data) {
+    CURL *curl = curl_easy_init();
+    if (curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_POST, 1);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_data);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, (struct curl_slist*)curl_slist_append(NULL, "Content-Type: application/json"));
+        CURLcode res = curl_easy_perform(curl);
+        if (res != CURLE_OK) {
+            fprintf(stderr, "CURL Error: %s\n", curl_easy_strerror(res));
+        }
+        curl_easy_cleanup(curl);
+    }
+}
 // Function to analyze logs
 void analyze_logs(const char **logs, int num_logs, int rank, int num_procs, char *output) {
     int logs_per_process = num_logs / num_procs;
@@ -210,8 +220,10 @@ int main(int argc, char *argv[]) {
         final_json[strlen(final_json) - 1] = ']'; // Remove trailing comma
         sprintf(final_json + strlen(final_json), ", \"total_time\": %f}", end_time - start_time);
 
-        // Send to webhook
-        connect_socket("https://log-analytics.ns.namespaxe.com/logger", final_json);
+        connect_websocket("wss://log-analytics.ns.namespaxe.com/logger", final_json);
+        // Or use the webhook method:
+        // connect_socket("https://log-analytics.ns.namespaxe.com/logger", final_json);
+    
     }
 
     MPI_Finalize();
