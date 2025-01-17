@@ -3,6 +3,12 @@ FROM ubuntu:20.04
 
 # Set the environment to non-interactive to prevent prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive
+ENV OMPI_ALLOW_RUN_AS_ROOT=1
+ENV OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+
+# Create a non-root user and switch to that user
+RUN useradd -ms /bin/bash mpiuser
+USER mpiuser
 
 # Install required dependencies: OpenMPI, OpenMP, and build tools
 RUN apt-get update && apt-get install -y \
@@ -24,4 +30,4 @@ WORKDIR /app
 RUN mpic++ -fopenmp -o mpi_openmp_app mpi_openmp_app.cpp
 
 # Command to run the application
-CMD ["sh", "-c", "mpirun -np 4 ./mpi_openmp_app && echo 'Application completed!'"]
+CMD ["sh", "-c", "trap 'echo SIGTERM received; exit 0' SIGTERM; mpirun -np 4 ./mpi_openmp_app && echo 'Application completed!'"]
