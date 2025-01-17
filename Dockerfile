@@ -31,7 +31,7 @@ WORKDIR /app
 COPY --chown=mpiuser:mpiuser . /app
 
 # Compile your application (as mpiuser)
-RUN mpic++ -fopenmp -o mpi_openmp_app mpi_openmp_app.cpp -lcurl
+RUN mpic++ -fopenmp -o mpi_openmp_app mpi_openmp_app.cpp -lcurl -lwebsockets -lssl -lcrypto
 
 # Command to run the application with oversubscribe and handle graceful termination
 CMD ["sh", "-c", "trap 'echo SIGTERM received; echo Application terminated gracefully; exit 0' SIGTERM; mpirun --oversubscribe -np 2 ./mpi_openmp_app && echo 'Application completed!'; sleep 5"]
