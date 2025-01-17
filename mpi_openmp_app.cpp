@@ -4,9 +4,9 @@
 #include <string.h>
 #include <mpi.h>
 #include <time.h>
+#include <curl/curl.h>
 #include <libwebsockets.h>
 
-// WebSocket data handling callback
 static int websocket_callback(struct libwebsocket_context *context, struct libwebsocket *wsi,
                               enum libwebsocket_callback_reasons reason, void *user, void *in, size_t len) {
     switch (reason) {
@@ -27,74 +27,136 @@ static int websocket_callback(struct libwebsocket_context *context, struct libwe
     return 0;
 }
 
-// Function to send JSON data via WebSocket
-void send_websocket_data(const char *json_data) {
+void connect_socket(const char *url, const char *json_data) {
     struct lws_context_creation_info info;
     struct lws_client_connect_info i;
     struct libwebsocket_context *context;
     struct libwebsocket *wsi;
 
+    // Initialize the WebSocket context
     memset(&info, 0, sizeof(info));
     info.port = CONTEXT_PORT_NO_LISTEN; // We're a client, so no listening port
     info.protocols = (struct libwebsocket_protocols[]) {{
         "http-only", websocket_callback, 0, 0,
     }, {NULL, NULL, 0, 0}}; // Single protocol
 
+    // Create WebSocket context
     context = libwebsocket_create_context(&info);
     if (context == NULL) {
         fprintf(stderr, "Error creating WebSocket context.\n");
         return;
     }
 
+    // Set up connection information
     memset(&i, 0, sizeof(i));
     i.context = context;
-    i.address = "log-analytics.ns.namespaxe.com";
-    i.port = 80; // Use the appropriate port for WebSocket
-    i.path = "/logger";
+    i.address = "log-analytics.ns.namespaxe.com"; // WebSocket server address
+    i.port = 80; // WebSocket port (change if needed)
+    i.path = "/logger"; // WebSocket path
     i.host = i.address;
     i.origin = i.address;
-    i.protocol = "http-only";
-    i.local_protocol_name = NULL;
+    i.protocol = "http-only"; // Protocol to use
 
-    // Connect to WebSocket
+    // Connect to WebSocket server
     wsi = libwebsocket_client_connect_via_info(&i);
     if (wsi == NULL) {
         fprintf(stderr, "WebSocket connection failed.\n");
+        libwebsocket_context_destroy(context);
         return;
     }
 
-    // Wait for the connection to be established
+    // Wait for the WebSocket connection to be established
     while (libwebsocket_service(context, 0) >= 0) {
         if (libwebsocket_get_peer_address(wsi) != NULL) {
             break;
         }
     }
 
-    // Send JSON data
+    // Send the JSON data through the WebSocket
     libwebsocket_write(wsi, (unsigned char *)json_data, strlen(json_data), LWS_WRITE_TEXT);
 
     // Wait for the server to receive the message
     libwebsocket_service(context, 0);
 
-    // Close WebSocket connection
+    // Close the WebSocket connection
     libwebsocket_context_destroy(context);
 }
 
-// Function to gather and send the final JSON data to WebSocket
-void gather_and_send_to_websocket(char gathered_data[][8192], int num_procs) {
-    double start_time, end_time;
-    char final_json[65536] = "{\"all_tasks\": [";
+// Function to analyze logs
+void analyze_logs(const char **logs, int num_logs, int rank, int num_procs, char *output) {
+    int logs_per_process = num_logs / num_procs;
+    int start_idx = rank * logs_per_process;
+    int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
 
-    // Collect gathered data from each process
-    for (int i = 0; i < num_procs; i++) {
-        strcat(final_json, gathered_data[i]);
-        strcat(final_json, ",");
+    sprintf(output + strlen(output), "\"analyzed_logs\": [");
+    for (int i = start_idx; i < end_idx; i++) {
+        sprintf(output + strlen(output), "{\"log_id\": %d, \"log\": \"%s\", \"rank\": %d},", i, logs[i], rank);
     }
-    final_json[strlen(final_json) - 1] = ']'; // Remove trailing comma
-    sprintf(final_json + strlen(final_json), "}");
+    output[strlen(output) - 1] = ']'; // Remove trailing comma
+}
 
-    // Send the compiled data to WebSocket server
-    send_websocket_data(final_json);
+// Function to categorize logs
+void categorize_logs(const char **logs, int num_logs, int rank, int num_procs, char *output) {
+    int logs_per_process = num_logs / num_procs;
+    int start_idx = rank * logs_per_process;
+    int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
+
+    sprintf(output + strlen(output), ", \"categories\": [");
+    for (int i = start_idx; i < end_idx; i++) {
+        const char *category = strstr(logs[i], "Error") ? "ERROR" :
+                               strstr(logs[i], "Warning") ? "WARNING" :
+                               strstr(logs[i], "Critical") ? "CRITICAL" : "INFO";
+        sprintf(output + strlen(output), "{\"log_id\": %d, \"category\": \"%s\", \"rank\": %d},", i, category, rank);
+    }
+    output[strlen(output) - 1] = ']'; // Remove trailing comma
+}
+
+// Function to count occurrences of a keyword
+void count_keyword_occurrences(const char **logs, int num_logs, const char *keyword, int rank, int num_procs, char *output) {
+    int count = 0;
+    int logs_per_process = num_logs / num_procs;
+    int start_idx = rank * logs_per_process;
+    int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
+
+    for (int i = start_idx; i < end_idx; i++) {
+        if (strstr(logs[i], keyword)) {
+            count++;
+        }
+    }
+    sprintf(output + strlen(output), ", \"keyword_count\": {\"keyword\": \"%s\", \"count\": %d, \"rank\": %d}", keyword, count, rank);
+}
+
+// Function to calculate checksum
+void calculate_checksum(const char **logs, int num_logs, int rank, int num_procs, char *output) {
+    int logs_per_process = num_logs / num_procs;
+    int start_idx = rank * logs_per_process;
+    int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
+
+    sprintf(output + strlen(output), ", \"checksums\": [");
+    for (int i = start_idx; i < end_idx; i++) {
+        unsigned long checksum = 0;
+        for (int j = 0; logs[i][j] != '\0'; j++) {
+            checksum += logs[i][j];
+        }
+        sprintf(output + strlen(output), "{\"log_id\": %d, \"checksum\": %lu, \"rank\": %d},", i, checksum, rank);
+    }
+    output[strlen(output) - 1] = ']'; // Remove trailing comma
+}
+
+// Function to send JSON data via webhook
+void connect_socket(const char *url, const char *json_data) {
+    CURL *curl = curl_easy_init();
+    if (curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_POST, 1);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_data);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, (struct curl_slist*)curl_slist_append(NULL, "Content-Type: application/json"));
+        CURLcode res = curl_easy_perform(curl);
+        if (res != CURLE_OK) {
+            fprintf(stderr, "CURL Error: %s\n", curl_easy_strerror(res));
+        }
+        curl_easy_cleanup(curl);
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -140,7 +202,16 @@ int main(int argc, char *argv[]) {
         end_time = MPI_Wtime();
 
         // Compile final JSON
-        gather_and_send_to_websocket(gathered_data, num_procs);
+        char final_json[65536] = "{\"all_tasks\": [";
+        for (int i = 0; i < num_procs; i++) {
+            strcat(final_json, gathered_data[i]);
+            strcat(final_json, ",");
+        }
+        final_json[strlen(final_json) - 1] = ']'; // Remove trailing comma
+        sprintf(final_json + strlen(final_json), ", \"total_time\": %f}", end_time - start_time);
+
+        // Send to webhook
+        connect_socket("https://log-analytics.ns.namespaxe.com/logger", final_json);
     }
 
     MPI_Finalize();
