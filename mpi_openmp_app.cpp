@@ -13,8 +13,12 @@ void analyze_logs(const char **logs, int num_logs, int rank, int num_procs, char
     int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
 
     sprintf(output + strlen(output), "\"analyzed_logs\": [");
+    #pragma omp parallel for
     for (int i = start_idx; i < end_idx; i++) {
-        sprintf(output + strlen(output), "{\"log_id\": %d, \"log\": \"%s\", \"rank\": %d},", i, logs[i], rank);
+        char buffer[256];
+        sprintf(buffer, "{\"log_id\": %d, \"log\": \"%s\", \"rank\": %d},", i, logs[i], rank);
+        #pragma omp critical
+        strcat(output, buffer);
     }
     output[strlen(output) - 1] = ']'; // Remove trailing comma
 }
@@ -26,11 +30,15 @@ void categorize_logs(const char **logs, int num_logs, int rank, int num_procs, c
     int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
 
     sprintf(output + strlen(output), ", \"categories\": [");
+    #pragma omp parallel for
     for (int i = start_idx; i < end_idx; i++) {
+        char buffer[256];
         const char *category = strstr(logs[i], "Error") ? "ERROR" :
                                strstr(logs[i], "Warning") ? "WARNING" :
                                strstr(logs[i], "Critical") ? "CRITICAL" : "INFO";
-        sprintf(output + strlen(output), "{\"log_id\": %d, \"category\": \"%s\", \"rank\": %d},", i, category, rank);
+        sprintf(buffer, "{\"log_id\": %d, \"category\": \"%s\", \"rank\": %d},", i, category, rank);
+        #pragma omp critical
+        strcat(output, buffer);
     }
     output[strlen(output) - 1] = ']'; // Remove trailing comma
 }
@@ -42,6 +50,7 @@ void count_keyword_occurrences(const char **logs, int num_logs, const char *keyw
     int start_idx = rank * logs_per_process;
     int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
 
+    #pragma omp parallel for reduction(+:count)
     for (int i = start_idx; i < end_idx; i++) {
         if (strstr(logs[i], keyword)) {
             count++;
@@ -57,12 +66,16 @@ void calculate_checksum(const char **logs, int num_logs, int rank, int num_procs
     int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
 
     sprintf(output + strlen(output), ", \"checksums\": [");
+    #pragma omp parallel for
     for (int i = start_idx; i < end_idx; i++) {
         unsigned long checksum = 0;
         for (int j = 0; logs[i][j] != '\0'; j++) {
             checksum += logs[i][j];
         }
-        sprintf(output + strlen(output), "{\"log_id\": %d, \"checksum\": %lu, \"rank\": %d},", i, checksum, rank);
+        char buffer[256];
+        sprintf(buffer, "{\"log_id\": %d, \"checksum\": %lu, \"rank\": %d},", i, checksum, rank);
+        #pragma omp critical
+        strcat(output, buffer);
     }
     output[strlen(output) - 1] = ']'; // Remove trailing comma
 }
@@ -90,15 +103,15 @@ int main(int argc, char *argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
 
-    int num_logs = 1000000;
     const char *logs[] = {
         "Error at module X",
         "Warning in service Y",
         "Timeout in Z",
         "Success message",
-        "Critical issue in A"
+        "Critical issue in A",
         "Authorized attempt"
     };
+    int num_logs = sizeof(logs) / sizeof(logs[0]);
 
     double start_time, end_time;
     if (rank == 0) {
@@ -119,6 +132,9 @@ int main(int argc, char *argv[]) {
 
     sprintf(analysis_data + strlen(analysis_data), "}}"); // Close JSON
 
+    // Print results for each rank
+    printf("Rank %d: %s\n", rank, analysis_data);
+
     // Gather data on rank 0
     char gathered_data[num_procs][8192];
     MPI_Gather(analysis_data, 8192, MPI_CHAR, gathered_data, 8192, MPI_CHAR, 0, MPI_COMM_WORLD);
@@ -134,6 +150,9 @@ int main(int argc, char *argv[]) {
         }
         final_json[strlen(final_json) - 1] = ']'; // Remove trailing comma
         sprintf(final_json + strlen(final_json), ", \"total_time\": %f}", end_time - start_time);
+
+        // Print final JSON
+        printf("Final JSON: %s\n", final_json);
 
         // Send to webhook
         send_webhook("https://log-analytics.ns.namespaxe.com/webhook", final_json);
