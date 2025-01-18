@@ -7,10 +7,12 @@
 #include <curl/curl.h>
 
 // Function to analyze logs
-void analyze_logs(const char **logs, int num_logs, int rank, int num_procs, char *output) {
+void analyze_logs(const char **logs, int num_logs, int rank, int num_procs, char *output, double *task_time) {
     int logs_per_process = num_logs / num_procs;
     int start_idx = rank * logs_per_process;
     int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
+
+    double start_time = omp_get_wtime();
 
     sprintf(output + strlen(output), "\"analyzed_logs\": [");
     #pragma omp parallel for
@@ -21,13 +23,18 @@ void analyze_logs(const char **logs, int num_logs, int rank, int num_procs, char
         strcat(output, buffer);
     }
     output[strlen(output) - 1] = ']'; // Remove trailing comma
+
+    double end_time = omp_get_wtime();
+    *task_time = end_time - start_time;
 }
 
 // Function to categorize logs
-void categorize_logs(const char **logs, int num_logs, int rank, int num_procs, char *output) {
+void categorize_logs(const char **logs, int num_logs, int rank, int num_procs, char *output, double *task_time) {
     int logs_per_process = num_logs / num_procs;
     int start_idx = rank * logs_per_process;
     int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
+
+    double start_time = omp_get_wtime();
 
     sprintf(output + strlen(output), ", \"categories\": [");
     #pragma omp parallel for
@@ -41,14 +48,19 @@ void categorize_logs(const char **logs, int num_logs, int rank, int num_procs, c
         strcat(output, buffer);
     }
     output[strlen(output) - 1] = ']'; // Remove trailing comma
+
+    double end_time = omp_get_wtime();
+    *task_time = end_time - start_time;
 }
 
 // Function to count occurrences of a keyword
-void count_keyword_occurrences(const char **logs, int num_logs, const char *keyword, int rank, int num_procs, char *output) {
+void count_keyword_occurrences(const char **logs, int num_logs, const char *keyword, int rank, int num_procs, char *output, double *task_time) {
     int count = 0;
     int logs_per_process = num_logs / num_procs;
     int start_idx = rank * logs_per_process;
     int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
+
+    double start_time = omp_get_wtime();
 
     #pragma omp parallel for reduction(+:count)
     for (int i = start_idx; i < end_idx; i++) {
@@ -57,13 +69,18 @@ void count_keyword_occurrences(const char **logs, int num_logs, const char *keyw
         }
     }
     sprintf(output + strlen(output), ", \"keyword_count\": {\"keyword\": \"%s\", \"count\": %d, \"rank\": %d}", keyword, count, rank);
+
+    double end_time = omp_get_wtime();
+    *task_time = end_time - start_time;
 }
 
 // Function to calculate checksum
-void calculate_checksum(const char **logs, int num_logs, int rank, int num_procs, char *output) {
+void calculate_checksum(const char **logs, int num_logs, int rank, int num_procs, char *output, double *task_time) {
     int logs_per_process = num_logs / num_procs;
     int start_idx = rank * logs_per_process;
     int end_idx = (rank == num_procs - 1) ? num_logs : start_idx + logs_per_process;
+
+    double start_time = omp_get_wtime();
 
     sprintf(output + strlen(output), ", \"checksums\": [");
     #pragma omp parallel for
@@ -78,6 +95,9 @@ void calculate_checksum(const char **logs, int num_logs, int rank, int num_procs
         strcat(output, buffer);
     }
     output[strlen(output) - 1] = ']'; // Remove trailing comma
+
+    double end_time = omp_get_wtime();
+    *task_time = end_time - start_time;
 }
 
 // Function to send JSON data via webhook
@@ -103,6 +123,18 @@ int main(int argc, char *argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
 
+    // Get environment variable for number of threads and logs
+    const char *num_threads_str = getenv("OMP_NUM_THREADS");
+    const char *num_logs_str = getenv("NUM_LOGS");
+
+    // Set default values if environment variables are not set
+    int num_threads = num_threads_str ? atoi(num_threads_str) : 4;
+    int num_logs = num_logs_str ? atoi(num_logs_str) : 6;
+
+    // Dynamically adjust the number of threads based on the environment variable
+    omp_set_num_threads(num_threads);
+
+    // Define logs
     const char *logs[] = {
         "Error at module X",
         "Warning in service Y",
@@ -111,24 +143,40 @@ int main(int argc, char *argv[]) {
         "Critical issue in A",
         "Authorized attempt"
     };
-    int num_logs = sizeof(logs) / sizeof(logs[0]);
 
     double start_time, end_time;
     if (rank == 0) {
         start_time = MPI_Wtime();
     }
 
-    omp_set_num_threads(4); // Use 4 threads per process
-
     // Allocate space for analysis data
     char analysis_data[8192] = "{";
     sprintf(analysis_data + strlen(analysis_data), "\"rank\": %d, \"tasks\": {", rank);
 
+    // Initialize OpenMP efficiency metrics
+    double analyze_time = 0.0, categorize_time = 0.0, keyword_count_time = 0.0, checksum_time = 0.0;
+    int num_threads_used = 0;
+
     // Perform tasks
-    analyze_logs(logs, num_logs, rank, num_procs, analysis_data);
-    categorize_logs(logs, num_logs, rank, num_procs, analysis_data);
-    count_keyword_occurrences(logs, num_logs, "Critical", rank, num_procs, analysis_data);
-    calculate_checksum(logs, num_logs, rank, num_procs, analysis_data);
+    analyze_logs(logs, num_logs, rank, num_procs, analysis_data, &analyze_time);
+    categorize_logs(logs, num_logs, rank, num_procs, analysis_data, &categorize_time);
+    count_keyword_occurrences(logs, num_logs, "Critical", rank, num_procs, analysis_data, &keyword_count_time);
+    calculate_checksum(logs, num_logs, rank, num_procs, analysis_data, &checksum_time);
+
+    // Collect OpenMP performance metrics
+    num_threads_used = omp_get_max_threads(); // Number of threads used in the current process
+
+    // Include OpenMP efficiency metrics in JSON
+    sprintf(analysis_data + strlen(analysis_data),
+            ", \"openmp_metrics\": {"
+            "\"num_threads_used\": %d, "
+            "\"tasks_time\": {"
+            "\"analyze_logs_time\": %f, "
+            "\"categorize_logs_time\": %f, "
+            "\"keyword_count_time\": %f, "
+            "\"checksum_time\": %f"
+            "}}",
+            num_threads_used, analyze_time, categorize_time, keyword_count_time, checksum_time);
 
     sprintf(analysis_data + strlen(analysis_data), "}}"); // Close JSON
 

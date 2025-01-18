@@ -14,12 +14,16 @@ spec:
     spec:
       containers:
         - name: mpi-openmp-app
-          image: namespaxe/log-analytics:2.7
+          image: namespaxe/log-analytics:2.8
           ports:
             - containerPort: 8080
           env:
             - name: MPI_HOSTS
               value: "mpi-pod-0,mpi-pod-1,mpi-pod-2"
+            - name: OMP_NUM_THREADS
+              value: "4"
+            - name: NUM_LOGS
+              value: "100"
           resources:
             requests:
               memory: "300Mi"
